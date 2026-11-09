@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LogiTruck Quiz - SENAI Afonso Pena</title>
+    <!-- Tailwind CSS para UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js para renderização 3D da rodovia e caminhão -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- FontAwesome para ícones -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@600;700&display=swap');
+        
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background-color: #090d16;
+            color: #f8fafc;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .font-orbitron {
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        /* Scanline e gradiente estilo Arcade */
+        .arcade-overlay {
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+        }
+
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+        }
+
+        .boss-glow {
+            box-shadow: 0 0 25px rgba(220, 38, 38, 0.6);
+            border-color: rgba(239, 68, 68, 0.8) !important;
+        }
+
+        /* Pulse Animations */
+        @keyframes pulse-fast {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.03); }
+        }
+        .animate-pulse-fast {
+            animation: pulse-fast 1s infinite;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #0284c7;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="w-screen h-screen relative bg-slate-950 flex flex-col items-center justify-center overflow-hidden">
+
+    <!-- Canvas principal 3D -->
+    <div id="canvas-container" class="absolute inset-0 w-full h-full z-0"></div>
+
+    <!-- Overlay Visual Arcade -->
+    <div class="arcade-overlay absolute inset-0 z-10"></div>
+
+    <!-- ==================== HUD PRINCIPAL ==================== -->
+    <div id="hud-layer" class="absolute inset-0 z-20 pointer-events-none p-4 flex flex-col justify-between hidden">
+        <!-- Top HUD Bar -->
+        <div class="w-full flex flex-wrap justify-between items-start gap-4 pointer-events-auto">
+            <!-- Esquerda: Informações do Motorista & Fase -->
+            <div class="glass-panel px-4 py-2 rounded-xl flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-sky-600 flex items-center justify-center text-white text-lg font-bold shadow-md">
+                    <i class="fa-solid fa-truck-monster"></i>
+                </div>
+                <div>
+                    <div class="text-xs text-sky-400 font-semibold uppercase tracking-wider">Motorista LogiExpress</div>
+                    <div class="text-lg font-orbitron font-bold text-white flex items-center gap-2">
+                        Tiago <span id="hud-phase-badge" class="text-xs px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-600">Fase 1</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Centro: Progresso dos Postos & Cronômetro -->
+            <div class="glass-panel px-6 py-2 rounded-xl flex items-center gap-8">
+                <!-- Tempo -->
+                <div class="text-center">
+                    <div class="text-xs text-slate-400 uppercase tracking-wider"><i class="fa-solid fa-stopwatch mr-1"></i>Tempo</div>
+                    <div id="hud-timer" class="text-2xl font-orbitron font-bold text-amber-400">00:00.0</div>
+                </div>
+                
+                <div class="h-8 w-px bg-slate-700"></div>
+
+                <!-- Postos -->
+                <div>
+                    <div class="text-xs text-slate-400 uppercase tracking-wider mb-1 text-center">Postos de Fiscalização</div>
+                    <div id="hud-checkpoints" class="flex gap-1.5">
+                        <!-- Gerado Dinamicamente -->
+                    </div>
+                </div>
+
+                <div class="h-8 w-px bg-slate-700"></div>
+
+                <!-- Pontuação -->
+                <div class="text-center">
+                    <div class="text-xs text-slate-400 uppercase tracking-wider"><i class="fa-solid fa-trophy mr-1 text-amber-400"></i>Pontos</div>
+                    <div id="hud-score" class="text-2xl font-orbitron font-bold text-emerald-400">0</div>
+                </div>
+            </div>
+
+            <!-- Direita: Combustível / Vidas & Velocidade -->
+            <div class="glass-panel px-5 py-2 rounded-xl flex items-center gap-5 min-w-[240px]">
+                <!-- Indicador de Combustível -->
+                <div class="w-full">
+                    <div class="flex justify-between items-center text-xs font-semibold mb-1">
+                        <span class="text-amber-400 flex items-center gap-1"><i class="fa-solid fa-gas-pump"></i> Tanque</span>
+                        <span id="hud-fuel-text" class="text-amber-300 font-orbitron">100%</span>
+                    </div>
+                    <div class="w-full bg-slate-800 h-3.5 rounded-full overflow-hidden p-0.5 border border-slate-700">
+                        <div id="hud-fuel-bar" class="bg-gradient-to-r from-amber-500 to-emerald-400 h-full rounded-full transition-all duration-300" style="width: 100%;"></div>
+                    </div>
+                </div>
+                
+                <!-- Velocímetro -->
+                <div class="text-right border-l border-slate-700 pl-4">
+                    <div class="text-xs text-slate-400">Velocidade</div>
+                    <div class="text-xl font-orbitron font-bold text-sky-400"><span id="hud-speed">80</span> <span class="text-xs text-slate-400">km/h</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Combo / Bonus Alert (Toast Flutuante) -->
+        <div id="hud-toast" class="self-center glass-panel px-6 py-2 rounded-full border-emerald-500 text-emerald-300 text-sm font-bold opacity-0 transition-all duration-500 transform translate-y-4 flex items-center gap-2">
+            <i class="fa-solid fa-bolt text-amber-400"></i> <span id="toast-message">Bônus Ativado!</span>
+        </div>
+
+        <!-- Bottom Warning Banner (Para o Loop Temporal / Alertas) -->
+        <div id="hud-warning-banner" class="self-center bg-red-950/90 border border-red-600 text-red-200 px-8 py-3 rounded-xl font-orbitron font-bold text-lg hidden animate-pulse-fast flex items-center gap-3 shadow-2xl">
+            <i class="fa-solid fa-triangle-exclamation text-2xl text-red-500"></i>
+            <span id="warning-banner-text">RETORNO OBRIGATÓRIO! CARGA BARRA EM FISCALIZAÇÃO</span>
+        </div>
+    </div>
+
+    <!-- ==================== TELA DE INÍCIO / MENU ==================== -->
+    <div id="screen-start" class="absolute inset-0 z-30 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md">
+        <div class="max-w-2xl w-full glass-panel p-8 rounded-2xl border-sky-500/40 text-center relative overflow-hidden">
+            <div class="absolute -top-12 -right-12 w-40 h-40 bg-sky-500/10 rounded-full blur-2xl"></div>
+            
+            <!-- Logo / Cabeçalho -->
+            <div class="inline-block bg-sky-950 text-sky-400 border border-sky-600 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-widest mb-3">
+                SENAI Afonso Pena • TGDQ
+            </div>
+            <h1 class="text-4xl md:text-5xl font-orbitron font-black text-white tracking-wider mb-2">
+                LOGI<span class="text-sky-500">TRUCK</span> QUIZ
+            </h1>
+            <p class="text-slate-300 text-sm md:text-base max-w-lg mx-auto mb-6">
+                Assuma o volante do caminhão da <strong class="text-sky-400">LogiExpress</strong> como o motorista <strong class="text-amber-400">Tiago</strong>. Responda corretamente aos Postos de Fiscalização sobre Tratamento de Dados na Logística para entregar a carga crítica no menor tempo possível!
+            </p>
+
+            <!-- Cards Resumo das Mecânicas -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-left mb-6">
+                <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
+                    <div class="font-bold text-sky-400 flex items-center gap-2 mb-1">
+                        <i class="fa-solid fa-road"></i> Fase 1: Rodovia Expressa
+                    </div>
+                    <p class="text-xs text-slate-400">5 Postos de fiscalização. O combustível só gasta se cometer erros. Resposta rápida concede boost de velocidade!</p>
+                </div>
+                <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800">
+                    <div class="font-bold text-red-400 flex items-center gap-2 mb-1">
+                        <i class="fa-solid fa-cloud-showers-heavy"></i> Fase 2: O Desafio do Chefão
+                    </div>
+                    <p class="text-xs text-slate-400">Serra noturna com chuva. Combustível consome continuamente! Errar o Chefão ativa o <strong>Loop Temporal</strong> (retorno ao início).</p>
+                </div>
+            </div>
+
+            <!-- Botão Iniciar -->
+            <button id="btn-start-game" class="w-full md:w-auto px-10 py-4 bg-gradient-to-r from-sky-600 to-blue-700 hover:from-sky-500 hover:to-blue-600 text-white font-orbitron font-bold text-xl rounded-xl shadow-lg shadow-sky-600/30 transition-all transform hover:scale-105 active:scale-95 flex items-center justify-center gap-3 mx-auto">
+                <i class="fa-solid fa-play"></i> INICIAR VIAGEM
+            </button>
+
+            <!-- Créditos Grupo -->
+            <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-slate-400">
+                <div class="font-semibold text-slate-300 mb-1">Desenvolvido por Integrantes do SENAI:</div>
+                <div class="flex flex-wrap justify-center gap-x-3 gap-y-1 text-slate-400">
+                    <span>Ana Paula Carvalho</span> •
+                    <span>Jaqueline Jamili Souza</span> •
+                    <span>Luiz Henrique Zeferino</span> •
+                    <span>Laís Nascimento</span> •
+                    <span>Henrique Gonçalves</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== MODAL DE PERGUNTA (POSTO DE FISCALIZAÇÃO) ==================== -->
+    <div id="modal-quiz" class="absolute inset-0 z-40 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md hidden">
+        <div id="quiz-card" class="max-w-2xl w-full glass-panel p-6 rounded-2xl border-sky-500/50 relative shadow-2xl transition-all duration-300">
+            <!-- Header do Posto -->
+            <div class="flex justify-between items-center border-b border-slate-700/80 pb-3 mb-4">
+                <div class="flex items-center gap-3">
+                    <div id="quiz-icon-container" class="w-10 h-10 rounded-lg bg-sky-900 border border-sky-500 flex items-center justify-center text-sky-300 text-xl font-bold">
+                        <i class="fa-solid fa-clipboard-check"></i>
+                    </div>
+                    <div>
+                        <div id="quiz-badge" class="text-xs text-sky-400 font-bold uppercase tracking-widest">Posto de Fiscalização 01/05</div>
+                        <h3 id="quiz-topic" class="text-base font-bold text-white">Conceitos Fundamentais de Dados</h3>
+                    </div>
+                </div>
+                <div id="quiz-attempt-badge" class="px-3 py-1 bg-amber-950/80 border border-amber-600/60 text-amber-300 text-xs font-bold rounded-full">
+                    Tentativa 1 de 2
+                </div>
+            </div>
+
+            <!-- Caixa de Texto da Pergunta / Cenário -->
+            <div id="quiz-scenario-box" class="mb-4 bg-slate-900/90 p-4 rounded-xl border border-slate-800 hidden">
+                <div class="text-xs text-amber-400 font-bold uppercase mb-1 flex items-center gap-1">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Relatório de Ocorrência Crítica
+                </div>
+                <p id="quiz-scenario-text" class="text-xs md:text-sm text-slate-300 italic leading-relaxed">
+                    <!-- Texto do cenário do Chefão -->
+                </p>
+            </div>
+
+            <p id="quiz-question-text" class="text-sm md:text-base text-slate-100 font-semibold mb-5 leading-relaxed">
+                Carregando pergunta...
+            </p>
+
+            <!-- Alternativas -->
+            <div id="quiz-options-container" class="space-y-3 mb-5">
+                <!-- Botões inseridos via JS -->
+            </div>
+
+            <!-- Box de Dica (Aparece após 1º erro) -->
+            <div id="quiz-hint-box" class="hidden bg-amber-950/60 border border-amber-600/50 rounded-xl p-3 text-xs text-amber-200 flex items-start gap-2 mb-4 animate-pulse">
+                <i class="fa-solid fa-lightbulb text-amber-400 text-base mt-0.5"></i>
+                <div>
+                    <strong class="font-bold text-amber-300">Dica do Fiscal:</strong>
+                    <span id="quiz-hint-text">Revise os conceitos de entrada e saída.</span>
+                </div>
+            </div>
+
+            <!-- Footer do Modal -->
+            <div class="flex justify-between items-center pt-3 border-t border-slate-800 text-xs text-slate-400">
+                <span class="flex items-center gap-1"><i class="fa-solid fa-shield-halved text-sky-400"></i> Responda com precisão para liberar o caminhão</span>
+                <span id="quiz-punishment-warning" class="text-amber-400 font-semibold">1º Erro: -20% Combustível</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== SCREEN GAME OVER ==================== -->
+    <div id="screen-gameover" class="absolute inset-0 z-50 flex items-center justify-center p-4 bg-red-950/90 backdrop-blur-lg hidden">
+        <div class="max-w-md w-full glass-panel boss-glow p-8 rounded-2xl text-center">
+            <div class="w-20 h-20 bg-red-900/60 border-2 border-red-500 rounded-full flex items-center justify-center text-red-400 text-4xl mx-auto mb-4 animate-bounce">
+                <i class="fa-solid fa-ban"></i>
+            </div>
+            <h2 class="text-3xl font-orbitron font-black text-white mb-2">FALHA NA ENTREGA!</h2>
+            <p id="gameover-reason" class="text-sm text-red-200 mb-6">
+                Seu caminhão ficou sem combustível na rodovia e a entrega crítica foi cancelada.
+            </p>
+
+            <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800 mb-6 text-left space-y-2 text-xs">
+                <div class="flex justify-between text-slate-400"><span>Tempo Acumulado:</span> <strong id="go-time" class="text-white">00:00</strong></div>
+                <div class="flex justify-between text-slate-400"><span>Postos Concluídos:</span> <strong id="go-checkpoints" class="text-white">0/5</strong></div>
+            </div>
+
+            <button id="btn-restart-gameover" class="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-orbitron font-bold rounded-xl shadow-lg transition-all">
+                <i class="fa-solid fa-rotate-left mr-2"></i> TENTAR NOVAMENTE
+            </button>
+        </div>
+    </div>
+
+    <!-- ==================== TELA FINAL DE VITÓRIA / RELATÓRIO ==================== -->
+    <div id="screen-victory" class="absolute inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/95 backdrop-blur-xl hidden overflow-y-auto">
+        <div class="max-w-2xl w-full glass-panel p-8 rounded-2xl border-emerald-500/50 my-auto text-center">
+            <!-- Header Vitória -->
+            <div class="inline-block bg-emerald-950 text-emerald-400 border border-emerald-600 text-xs font-bold px-4 py-1 rounded-full uppercase tracking-widest mb-3">
+                ENTREGA CONCLUÍDA COM SUCESSO!
+            </div>
+            <h2 class="text-3xl md:text-4xl font-orbitron font-black text-white mb-2">RELATÓRIO DE DESEMPENHO</h2>
+            <p class="text-xs md:text-sm text-slate-300 mb-6">LogiExpress • Avaliação Técnica de Tratamento de Dados</p>
+
+            <!-- Avaliação de Estrelas -->
+            <div id="victory-stars-container" class="flex justify-center gap-3 text-4xl md:text-5xl mb-6">
+                <i class="fa-solid fa-star text-amber-400 drop-shadow-md"></i>
+                <i class="fa-solid fa-star text-amber-400 drop-shadow-md"></i>
+                <i class="fa-solid fa-star text-amber-400 drop-shadow-md"></i>
+            </div>
+            <div id="victory-rank-title" class="text-xl font-orbitron font-bold text-amber-300 mb-6">ENTREGA DE OURO!</div>
+
+            <!-- Métricas Finais Grid -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                    <div class="text-xs text-slate-400 mb-1">Pontuação Final</div>
+                    <div id="vic-score" class="text-lg font-orbitron font-bold text-emerald-400">14.500</div>
+                </div>
+                <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                    <div class="text-xs text-slate-400 mb-1">Tempo Total</div>
+                    <div id="vic-time" class="text-lg font-orbitron font-bold text-sky-400">02:15.4</div>
+                </div>
+                <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                    <div class="text-xs text-slate-400 mb-1">Tanque Restante</div>
+                    <div id="vic-fuel" class="text-lg font-orbitron font-bold text-amber-400">85%</div>
+                </div>
+                <div class="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                    <div class="text-xs text-slate-400 mb-1">Precisão Quiz</div>
+                    <div id="vic-accuracy" class="text-lg font-orbitron font-bold text-purple-400">100%</div>
+                </div>
+            </div>
+
+            <!-- Resumo das Competências SENAI -->
+            <div class="bg-slate-900/90 p-4 rounded-xl border border-slate-800 text-left mb-6 text-xs text-slate-300 space-y-1.5">
+                <div class="font-bold text-sky-400 uppercase text-xs mb-1">Competências Validadas na Viagem:</div>
+                <div>✔ Coleta automática de dados operacionais via sensores e telemetria (WMS/TMS).</div>
+                <div>✔ Estruturação de Datasets e filtragem de Dados Brutos para tomada de decisão.</div>
+                <div>✔ Monitoramento de indicadores-chave de desempenho (KPIs de Gestão).</div>
+            </div>
+
+            <!-- Botões -->
+            <div class="flex flex-col sm:flex-row gap-3 justify-center mb-6">
+                <button id="btn-restart-victory" class="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-orbitron font-bold rounded-xl shadow-lg transition-all">
+                    <i class="fa-solid fa-play mr-2"></i> JOGAR NOVAMENTE
+                </button>
+            </div>
+
+            <!-- Rodapé Créditos -->
+            <div class="pt-4 border-t border-slate-800 text-xs text-slate-400">
+                <strong class="text-slate-300">SENAI Afonso Pena • TGDQ</strong><br>
+                Integrantes: Ana Paula Carvalho de Oliveira, Jaqueline Jamili Souza Lima, Luiz Henrique dos Santos Zeferino, Laís Nascimento dos Santos e Henrique Gonçalves de Almeida.
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== LÓGICA DO JOGO EM JAVASCRIPT ==================== -->
+    <script>
+        /* ==================== SINTETIZADOR DE ÁUDIO (Web Audio API) ==================== */
+        class SoundSystem {
+            constructor() {
+                this.ctx = null;
+                this.engineOsc = null;
+                this.engineGain = null;
+                this.rainGain = null;
+                this.isMuted = false;
+            }
+
+            init() {
+                if (this.ctx) return;
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                this.ctx = new AudioCtx();
+                this.startEngine();
+            }
+
+            startEngine() {
+                if (!this.ctx) return;
+                try {
+                    this.engineOsc = this.ctx.createOscillator();
+                    this.engineGain = this.ctx.createGain();
+                    
+                    this.engineOsc.type = 'sawtooth';
+                    this.engineOsc.frequency.setValueAtTime(55, this.ctx.currentTime); // 55Hz motor grave
+                    
+                    // Filter lowpass para som suave de motor
+                    const filter = this.ctx.createBiquadFilter();
+                    filter.type = 'lowpass';
+                    filter.frequency.setValueAtTime(160, this.ctx.currentTime);
+
+                    this.engineOsc.connect(filter);
+                    filter.connect(this.engineGain);
+                    this.engineGain.connect(this.ctx.destination);
+                    
+                    this.engineGain.gain.setValueAtTime(0.05, this.ctx.currentTime);
+                    this.engineOsc.start();
+                } catch (e) { console.log("Audio non-blocking:", e); }
+            }
+
+            updateEngineSpeed(speedRatio) {
+                if (!this.ctx || !this.engineOsc) return;
+                const freq = 45 + (speedRatio * 50);
+                this.engineOsc.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.1);
+            }
+
+            playCorrect() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(523.25, now); // C5
+                osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.15); // E5
+                osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.3); // G5
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.4);
+            }
+
+            playWrong() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(180, now);
+                osc.frequency.linearRampToValueAtTime(110, now + 0.3);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.35);
+            }
+
+            playHonk() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc1 = this.ctx.createOscillator();
+                const osc2 = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc1.type = 'triangle';
+                osc2.type = 'sawtooth';
+                osc1.frequency.setValueAtTime(220, now);
+                osc2.frequency.setValueAtTime(277, now);
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                osc1.connect(gain);
+                osc2.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc1.start(now); osc2.start(now);
+                osc1.stop(now + 0.4); osc2.stop(now + 0.4);
+            }
+
+            playAlarm() {
+                if (!this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(800, now);
+                osc.frequency.setValueAtTime(400, now + 0.15);
+                osc.frequency.setValueAtTime(800, now + 0.3);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.5);
+            }
+        }
+
+        const audio = new SoundSystem();
+
+        /* ==================== BANCO DE DADOS DE PERGUNTAS ==================== */
+        const QUIZ_DATABASE = {
+            phase1: [
+                {
+                    id: 1,
+                    topic: "Conceitos Fundamentais de Dados",
+                    question: "Na gestão de transportes da LogiExpress, qual é a definição mais precisa para 'Dado Bruto' antes de qualquer processamento?",
+                    options: [
+                        { text: "A) Um relatório gerencial consolidado com indicadores de desempenho mensal.", correct: false },
+                        { text: "B) Um registro numérico isolado e sem contexto imediato, como '85' capturado por um sensor.", correct: true },
+                        { text: "C) Uma decisão estratégica tomada pela diretoria sobre rotas de entregas.", correct: false },
+                        { text: "D) Um banco de dados estruturado pronto para auditoria da Receita Federal.", correct: false }
+                    ],
+                    hint: "Dados brutos representam valores puros coletados que ainda não possuem contexto ou interpretação."
+                },
+                {
+                    id: 2,
+                    topic: "Estruturas de Datasets Logísticos",
+                    question: "O sistema central da LogiExpress precisa organizar milhares de entregas diárias. O que caracteriza um 'Dataset' estruturado na logística?",
+                    options: [
+                        { text: "A) Conjunto organizado de dados em tabelas com colunas bem definidas (Ex: ID, Placa, Horário, Peso).", correct: true },
+                        { text: "B) Uma coleção aleatória de áudios gravados pelos motoristas nas viagens.", correct: false },
+                        { text: "C) Um arquivo corrompido de telemetria sem possibilidade de leitura.", correct: false },
+                        { text: "D) Apenas o valor financeiro do frete cobrado do cliente final.", correct: false }
+                    ],
+                    hint: "Um dataset é uma coleção de dados organizada de forma padronizada para consulta e análise."
+                },
+                {
+                    id: 3,
+                    topic: "Tecnologias de Coleta (WMS e TMS)",
+                    question: "Tiago utiliza o aplicativo de bordo integrado ao TMS e WMS. Qual é o papel principal do sistema TMS (Transportation Management System)?",
+                    options: [
+                        { text: "A) Controlar o empilhamento físico de caixas no interior do galpão industrial.", correct: false },
+                        { text: "B) Gerenciar e otimizar o transporte, auditoria de fretes, rotas e rastreamento de frota.", correct: true },
+                        { text: "C) Realizar o pagamento da folha de salários dos motoristas.", correct: false },
+                        { text: "D) Substituir a necessidade de sensores de telemetria nos veículos.", correct: false }
+                    ],
+                    hint: "TMS foca na gestão de transporte fora do galpão, enquanto o WMS foca na gestão do armazém."
+                },
+                {
+                    id: 4,
+                    topic: "Aplicação Estratégica no Negócio",
+                    question: "Como o tratamento correto de dados de telemetria em tempo real gera valor competitivo para a transportadora LogiExpress?",
+                    options: [
+                        { text: "A) Apenas aumentando a quantidade de papel impresso nos postos de fiscalização.", correct: false },
+                        { text: "B) Permitindo prever manutenções preventivas, reduzir consumo de combustível e evitar atrasos.", correct: true },
+                        { text: "C) Eliminando totalmente a necessidade de motoristas profissionais.", correct: false },
+                        { text: "D) Impedindo que os gestores tenham acesso ao status das cargas.", correct: false }
+                    ],
+                    hint: "Dados operacionais transformados em informação geram eficiência, redução de custos e previsibilidade."
+                },
+                {
+                    id: 5,
+                    topic: "Gestão de Métricas & KPIs",
+                    question: "Qual das alternativas a seguir representa um KPI (Key Performance Indicator) fundamental para avaliar a eficiência de entrega da LogiExpress?",
+                    options: [
+                        { text: "A) Modelo da marca do pneu sobressalente do caminhão.", correct: false },
+                        { text: "B) Cor da pintura da cabine do veículo.", correct: false },
+                        { text: "C) OTIF (On-Time In-Full) - Percentual de entregas feitas no prazo e sem avarias.", correct: true },
+                        { text: "D) Número total de paradas para café do motorista.", correct: false }
+                    ],
+                    hint: "KPIs são indicadores-chave quantitativos que medem o sucesso direto do objetivo do negócio."
+                }
+            ],
+            boss: {
+                id: 99,
+                topic: "Auditoria Integrada de Dados • Receita Federal",
+                scenario: "Um caminhão refrigerado teve falha na entrega de vacinas. O relatório mostra: Temperatura lida a cada 5 min (Dados Brutos), Tabela comparativa de limites de temperatura (Dataset), Notificação automática emitida ao motorista (Informação), Relatório mensal de perda de cargas (KPI de Gestão) e Sensores térmicos com telemetria via GPS (Tecnologia de Coleta).",
+                question: "Qual é a sequência CORRETA que representa o ciclo completo do Tratamento de Dados nessa operação (da Coleta até a Decisão do Gestor)?",
+                options: [
+                    { text: "A) Dataset -> KPI de Gestão -> Dados Brutos -> Tecnologia de Coleta -> Informação.", correct: false },
+                    { text: "B) Tecnologia de Coleta -> Dados Brutos -> Dataset -> Informação -> KPI de Gestão.", correct: true },
+                    { text: "C) Informação -> Dados Brutos -> Tecnologia de Coleta -> Dataset -> KPI de Gestão.", correct: false },
+                    { text: "D) KPI de Gestão -> Tecnologia de Coleta -> Informação -> Dataset -> Dados Brutos.", correct: false }
+                ],
+                hint: "Pense na jornada física do dado: Ele nasce no sensor (Coleta), gera um valor puro (Dado Bruto), é organizado (Dataset), ganha sentido útil (Informação) e consolida a gestão (KPI)."
+            }
+        };
+
+        /* ==================== ESTADO DO JOGO ==================== */
+        const gameState = {
+            running: false,
+            phase: 1, // 1 ou 2
+            score: 0,
+            startTime: 0,
+            elapsedTime: 0,
+            fuel: 100, // 0 a 100%
+            speed: 80, // km/h relativo
+            targetSpeed: 80,
+            
+            checkpointIndex: 0,
+            totalCheckpoints: 5,
+            
+            consecutiveCorrect: 0,
+            currentAttempt: 1,
+            
+            // Controle 3D / Movimento
+            distanceTraveled: 0,
+            checkpointDistances: [1200, 2500, 3800, 5100, 6400], // Distâncias dos postos Fase 1
+            bossCheckpointDistance: 3500, // Distância Fase 2
+            isStoppedAtCheckpoint: false,
+
+            // Estatísticas finais
+            correctFirstTry: 0,
+            totalErrors: 0,
+            returnedToStartBoss: false
+        };
+
+        /* ==================== MOTOR GRÁFICO 3D (THREE.JS) ==================== */
+        class RenderEngine {
+            constructor() {
+                this.container = document.getElementById('canvas-container');
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                
+                this.truckGroup = new THREE.Group();
+                this.roadMesh = null;
+                this.rainParticles = null;
+                this.checkpointGates = [];
+                
+                this.init();
+            }
+
+            init() {
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                this.renderer.shadowMap.enabled = true;
+                this.container.appendChild(this.renderer.domElement);
+
+                // Configuração da Câmera estilo Runner 3D
+                this.camera.position.set(0, 4.5, 9);
+                this.camera.lookAt(0, 1.5, -10);
+
+                // Iluminação
+                this.ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+                this.scene.add(this.ambientLight);
+
+                this.dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+                this.dirLight.position.set(20, 40, 20);
+                this.dirLight.castShadow = true;
+                this.scene.add(this.dirLight);
+
+                // Neblina (Fog)
+                this.scene.fog = new THREE.FogExp2(0x87ceeb, 0.008);
+
+                this.createRoad();
+                this.createTruck();
+                this.createEnvironment();
+                this.createRain();
+
+                window.addEventListener('resize', () => this.onWindowResize());
+            }
+
+            setPhaseVisuals(phase) {
+                if (phase === 1) {
+                    // Dia Limpo
+                    this.scene.background = new THREE.Color(0x38bdf8);
+                    this.scene.fog.color.setHex(0x38bdf8);
+                    this.scene.fog.density = 0.006;
+                    this.ambientLight.intensity = 0.8;
+                    this.dirLight.intensity = 1.2;
+                    if (this.rainParticles) this.rainParticles.visible = false;
+                } else {
+                    // Fase 2: Serra Noturna com Chuva e Neblina
+                    this.scene.background = new THREE.Color(0x050814);
+                    this.scene.fog.color.setHex(0x090d16);
+                    this.scene.fog.density = 0.025; // Neblina densa
+                    this.ambientLight.intensity = 0.2;
+                    this.dirLight.intensity = 0.3;
+                    if (this.rainParticles) this.rainParticles.visible = true;
+                }
+            }
+
+            createRoad() {
+                // Plane da Estrada
+                const roadGeo = new THREE.PlaneGeometry(16, 2000);
+                const roadMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+                this.roadMesh = new THREE.Mesh(roadGeo, roadMat);
+                this.roadMesh.rotation.x = -Math.PI / 2;
+                this.roadMesh.position.z = -900;
+                this.roadMesh.receiveShadow = true;
+                this.scene.add(this.roadMesh);
+
+                // Faixas Amarelas Centrais (Segmentadas)
+                const stripeGeo = new THREE.PlaneGeometry(0.3, 2000);
+                const stripeMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+                const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+                stripe.rotation.x = -Math.PI / 2;
+                stripe.position.y = 0.02;
+                stripe.position.z = -900;
+                this.scene.add(stripe);
+
+                // Gramados Laterais
+                const grassGeo = new THREE.PlaneGeometry(200, 2000);
+                const grassMat = new THREE.MeshStandardMaterial({ color: 0x065f46 });
+                const grassLeft = new THREE.Mesh(grassGeo, grassMat);
+                grassLeft.rotation.x = -Math.PI / 2;
+                grassLeft.position.set(-108, -0.05, -900);
+                const grassRight = grassLeft.clone();
+                grassRight.position.x = 108;
+                this.scene.add(grassLeft);
+                this.scene.add(grassRight);
+            }
+
+            createTruck() {
+                // Grupo do Caminhão Tiago / LogiExpress
+                const cabinGeo = new THREE.BoxGeometry(2.2, 2, 2.5);
+                const cabinMat = new THREE.MeshStandardMaterial({ color: 0x0284c7 }); // Azul LogiExpress
+                const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+                cabin.position.set(0, 1.5, 0);
+
+                // Baú / Carga Refrigerada
+                const cargoGeo = new THREE.BoxGeometry(2.3, 2.4, 5.5);
+                const cargoMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc }); // Baú Branco
+                const cargo = new THREE.Mesh(cargoGeo, cargoMat);
+                cargo.position.set(0, 1.8, -4);
+
+                // Rodas
+                const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.4, 16);
+                const wheelMat = new THREE.MeshStandardMaterial({ color: 0x0f172a });
+                
+                const wheelPositions = [
+                    [-1.2, 0.5, 0.8], [1.2, 0.5, 0.8],
+                    [-1.2, 0.5, -2.5], [1.2, 0.5, -2.5],
+                    [-1.2, 0.5, -5.2], [1.2, 0.5, -5.2]
+                ];
+
+                wheelPositions.forEach(pos => {
+                    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+                    wheel.rotation.z = Math.PI / 2;
+                    wheel.position.set(...pos);
+                    this.truckGroup.add(wheel);
+                });
+
+                // Faróis Frontais
+                const headlightGeo = new THREE.SphereGeometry(0.2, 8, 8);
+                const headlightMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+                const h1 = new THREE.Mesh(headlightGeo, headlightMat);
+                const h2 = new THREE.Mesh(headlightGeo, headlightMat);
+                h1.position.set(-0.8, 1.2, 1.25);
+                h2.position.set(0.8, 1.2, 1.25);
+                this.truckGroup.add(h1);
+                this.truckGroup.add(h2);
+
+                // Luzes dos Faróis (Spotlights para a noite)
+                this.spotLight1 = new THREE.SpotLight(0xffffff, 2, 40, Math.PI / 6, 0.5);
+                this.spotLight1.position.set(-0.8, 1.2, 1.2);
+                this.spotLight1.target.position.set(-0.8, 0, 20);
+                
+                this.spotLight2 = new THREE.SpotLight(0xffffff, 2, 40, Math.PI / 6, 0.5);
+                this.spotLight2.position.set(0.8, 1.2, 1.2);
+                this.spotLight2.target.position.set(0.8, 0, 20);
+
+                this.truckGroup.add(this.spotLight1);
+                this.truckGroup.add(this.spotLight1.target);
+                this.truckGroup.add(this.spotLight2);
+                this.truckGroup.add(this.spotLight2.target);
+
+                this.truckGroup.add(cabin);
+                this.truckGroup.add(cargo);
+
+                this.truckGroup.position.set(0, 0, 0);
+                this.scene.add(this.truckGroup);
+            }
+
+            createEnvironment() {
+                // Postos de Fiscalização na estrada (Pórticos 3D)
+                for (let i = 0; i < 6; i++) {
+                    const gateGroup = new THREE.Group();
+                    
+                    // Colunas
+                    const pillarGeo = new THREE.BoxGeometry(0.8, 7, 0.8);
+                    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x334155 });
+                    const p1 = new THREE.Mesh(pillarGeo, pillarMat);
+                    p1.position.set(-7, 3.5, 0);
+                    const p2 = new THREE.Mesh(pillarGeo, pillarMat);
+                    p2.position.set(7, 3.5, 0);
+
+                    // Teto / Banner
+                    const topGeo = new THREE.BoxGeometry(15, 1.5, 2);
+                    const topMat = new THREE.MeshStandardMaterial({ color: (i === 5) ? 0xdc2626 : 0x0284c7 });
+                    const top = new THREE.Mesh(topGeo, topMat);
+                    top.position.set(0, 6.5, 0);
+
+                    gateGroup.add(p1);
+                    gateGroup.add(p2);
+                    gateGroup.add(top);
+
+                    gateGroup.position.set(0, 0, -500 - (i * 300));
+                    this.checkpointGates.push(gateGroup);
+                    this.scene.add(gateGroup);
+                }
+            }
+
+            createRain() {
+                const count = 1500;
+                const geometry = new THREE.BufferGeometry();
+                const positions = new Float32Array(count * 3);
+
+                for (let i = 0; i < count * 3; i += 3) {
+                    positions[i] = (Math.random() - 0.5) * 40;
+                    positions[i + 1] = Math.random() * 20;
+                    positions[i + 2] = (Math.random() - 0.5) * 40;
+                }
+
+                geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                const material = new THREE.PointsMaterial({
+                    color: 0x38bdf8,
+                    size: 0.15,
+                    transparent: true,
+                    opacity: 0.6
+                });
+
+                this.rainParticles = new THREE.Points(geometry, material);
+                this.scene.add(this.rainParticles);
+            }
+
+            update(speed, delta) {
+                // Animação da estrada e pórticos rolando em direção à câmera
+                const moveDist = (speed * 0.1) * delta * 60;
+                
+                // Leve efeito de balanço no caminhão ao andar
+                if (speed > 5) {
+                    this.truckGroup.position.y = Math.sin(Date.now() * 0.01) * 0.05;
+                    this.truckGroup.rotation.z = Math.sin(Date.now() * 0.005) * 0.01;
+                } else {
+                    this.truckGroup.position.y = 0;
+                    this.truckGroup.rotation.z = 0;
+                }
+
+                // Animação de chuva na Fase 2
+                if (this.rainParticles && this.rainParticles.visible) {
+                    const positions = this.rainParticles.geometry.attributes.position.array;
+                    for (let i = 1; i < positions.length; i += 3) {
+                        positions[i] -= 0.8;
+                        if (positions[i] < 0) positions[i] = 20;
+                    }
+                    this.rainParticles.geometry.attributes.position.needsUpdate = true;
+                }
+
+                this.renderer.render(this.scene, this.camera);
+            }
+
+            onWindowResize() {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+        }
+
+        const renderEngine = new RenderEngine();
+
+        /* ==================== GERENCIADOR E LÓGICA DO GAMEPLAY ==================== */
+
+        // Elementos DOM HUD
+        const dom = {
+            hudLayer: document.getElementById('hud-layer'),
+            hudPhaseBadge: document.getElementById('hud-phase-badge'),
+            hudTimer: document.getElementById('hud-timer'),
+            hudCheckpoints: document.getElementById('hud-checkpoints'),
+            hudScore: document.getElementById('hud-score'),
+            hudFuelText: document.getElementById('hud-fuel-text'),
+            hudFuelBar: document.getElementById('hud-fuel-bar'),
+            hudSpeed: document.getElementById('hud-speed'),
+            hudToast: document.getElementById('hud-toast'),
+            toastMessage: document.getElementById('toast-message'),
+            warningBanner: document.getElementById('hud-warning-banner'),
+            warningBannerText: document.getElementById('warning-banner-text'),
+            
+            // Screens
+            screenStart: document.getElementById('screen-start'),
+            screenGameOver: document.getElementById('screen-gameover'),
+            screenVictory: document.getElementById('screen-victory'),
+            modalQuiz: document.getElementById('modal-quiz'),
+            quizCard: document.getElementById('quiz-card'),
+            
+            // Buttons
+            btnStart: document.getElementById('btn-start-game'),
+            btnRestartGO: document.getElementById('btn-restart-gameover'),
+            btnRestartVic: document.getElementById('btn-restart-victory'),
+            
+            // Quiz Modal Elements
+            quizBadge: document.getElementById('quiz-badge'),
+            quizTopic: document.getElementById('quiz-topic'),
+            quizAttemptBadge: document.getElementById('quiz-attempt-badge'),
+            quizScenarioBox: document.getElementById('quiz-scenario-box'),
+            quizScenarioText: document.getElementById('quiz-scenario-text'),
+            quizQuestionText: document.getElementById('quiz-question-text'),
+            quizOptionsContainer: document.getElementById('quiz-options-container'),
+            quizHintBox: document.getElementById('quiz-hint-box'),
+            quizHintText: document.getElementById('quiz-hint-text'),
+            quizPunishmentWarning: document.getElementById('quiz-punishment-warning'),
+            quizIconContainer: document.getElementById('quiz-icon-container')
+        };
+
+        // Renderizar Bolinhas de Progresso dos Postos
+        function buildCheckpointHUD() {
+            dom.hudCheckpoints.innerHTML = '';
+            const total = (gameState.phase === 1) ? 5 : 1;
+            for (let i = 0; i < total; i++) {
+                const dot = document.createElement('div');
+                dot.className = `w-3.5 h-3.5 rounded-full border border-slate-600 transition-all ${
+                    i < gameState.checkpointIndex ? 'bg-emerald-500 border-emerald-400 shadow-sm' : 
+                    i === gameState.checkpointIndex ? 'bg-sky-400 border-sky-300 animate-ping' : 'bg-slate-800'
+                }`;
+                dom.hudCheckpoints.appendChild(dot);
+            }
+        }
+
+        // Mostrar Toast de Bônus / Mensagem
+        function showToast(msg) {
+            dom.toastMessage.innerText = msg;
+            dom.hudToast.classList.remove('opacity-0', 'translate-y-4');
+            dom.hudToast.classList.add('opacity-100', 'translate-y-0');
+            setTimeout(() => {
+                dom.hudToast.classList.remove('opacity-100', 'translate-y-0');
+                dom.hudToast.classList.add('opacity-0', 'translate-y-4');
+            }, 3000);
+        }
+
+        // Mostrar Alerta Vermelho de Loop Temporal
+        function triggerWarningBanner(text) {
+            dom.warningBannerText.innerText = text;
+            dom.warningBanner.classList.remove('hidden');
+            audio.playAlarm();
+            setTimeout(() => {
+                dom.warningBanner.classList.add('hidden');
+            }, 4000);
+        }
+
+        // Atualizar HUD
+        function updateHUD() {
+            // Tempo Formatado
+            const min = Math.floor(gameState.elapsedTime / 60);
+            const sec = (gameState.elapsedTime % 60).toFixed(1);
+            dom.hudTimer.innerText = `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}`;
+
+            // Pontuação e Combustível
+            dom.hudScore.innerText = Math.floor(gameState.score).toLocaleString();
+            dom.hudFuelText.innerText = `${Math.max(0, Math.round(gameState.fuel))}%`;
+            dom.hudFuelBar.style.width = `${Math.max(0, gameState.fuel)}%`;
+
+            // Mudar cor da barra de combustível se crítico
+            if (gameState.fuel < 30) {
+                dom.hudFuelBar.className = "bg-gradient-to-r from-red-600 to-amber-500 h-full rounded-full transition-all duration-300 animate-pulse";
+            } else {
+                dom.hudFuelBar.className = "bg-gradient-to-r from-amber-500 to-emerald-400 h-full rounded-full transition-all duration-300";
+            }
+
+            // Velocidade
+            dom.hudSpeed.innerText = Math.round(gameState.speed);
+        }
+
+        /* ==================== LOOP PRINCIPAL DO JOGO ==================== */
+        let lastTimestamp = 0;
+
+        function gameLoop(timestamp) {
+            if (!gameState.running) return;
+
+            if (!lastTimestamp) lastTimestamp = timestamp;
+            const delta = (timestamp - lastTimestamp) / 1000;
+            lastTimestamp = timestamp;
+
+            // Atualiza Tempo
+            gameState.elapsedTime += delta;
+
+            // Regra de Combustível da Fase 2 (Consumo Contínuo por Segundo)
+            if (gameState.phase === 2 && !gameState.isStoppedAtCheckpoint) {
+                gameState.fuel -= 1.8 * delta; // Consome ~1.8% por segundo no trecho da serra
+                if (gameState.fuel <= 0) {
+                    triggerGameOver("Seu combustível acabou durante a subida íngreme da serra sob chuva!");
+                    return;
+                }
+            }
+
+            // Lerp de velocidade
+            gameState.speed += (gameState.targetSpeed - gameState.speed) * 0.05;
+            audio.updateEngineSpeed(gameState.speed / 120);
+
+            // Avanço da Distância se não estiver parado em posto
+            if (!gameState.isStoppedAtCheckpoint) {
+                gameState.distanceTraveled += gameState.speed * delta * 5;
+
+                // Verificação de Chegada em Posto
+                if (gameState.phase === 1) {
+                    const targetDist = gameState.checkpointDistances[gameState.checkpointIndex];
+                    if (gameState.distanceTraveled >= targetDist) {
+                        openCheckpointModal();
+                    }
+                } else if (gameState.phase === 2) {
+                    if (gameState.distanceTraveled >= gameState.bossCheckpointDistance) {
+                        openCheckpointModal();
+                    }
+                }
+            }
+
+            updateHUD();
+            renderEngine.update(gameState.speed, delta);
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        /* ==================== CONTROLE DE POSTOS E MODAL QUIZ ==================== */
+        let currentQuestion = null;
+
+        function openCheckpointModal() {
+            gameState.isStoppedAtCheckpoint = true;
+            gameState.targetSpeed = 0; // Para o caminhão no posto
+            gameState.currentAttempt = 1;
+
+            if (gameState.phase === 1) {
+                currentQuestion = QUIZ_DATABASE.phase1[gameState.checkpointIndex];
+                dom.quizBadge.innerText = `Posto de Fiscalização 0${gameState.checkpointIndex + 1}/05`;
+                dom.quizBadge.className = "text-xs text-sky-400 font-bold uppercase tracking-widest";
+                dom.quizCard.className = "max-w-2xl w-full glass-panel p-6 rounded-2xl border-sky-500/50 relative shadow-2xl";
+                dom.quizIconContainer.className = "w-10 h-10 rounded-lg bg-sky-900 border border-sky-500 flex items-center justify-center text-sky-300 text-xl font-bold";
+                dom.quizScenarioBox.classList.add('hidden');
+                dom.quizPunishmentWarning.innerText = "1º Erro: -20% Combustível | 2º Erro: -30% Combustível";
+            } else {
+                // Fase 2 - O Chefão
+                currentQuestion = QUIZ_DATABASE.boss;
+                dom.quizBadge.innerText = "AUDITORIA FINAL DE DADOS • CHEFÃO";
+                dom.quizBadge.className = "text-xs text-red-400 font-bold uppercase tracking-widest";
+                dom.quizCard.className = "max-w-2xl w-full glass-panel boss-glow p-6 rounded-2xl relative shadow-2xl";
+                dom.quizIconContainer.className = "w-10 h-10 rounded-lg bg-red-900 border border-red-500 flex items-center justify-center text-red-300 text-xl font-bold";
+                
+                // Exibe o Cenário Integrado
+                dom.quizScenarioBox.classList.remove('hidden');
+                dom.quizScenarioText.innerText = currentQuestion.scenario;
+                dom.quizPunishmentWarning.innerText = "FALHA TOTAL NO CHEFÃO = RETORNO OBRIGATÓRIO (LOOP TEMPORAL)";
+            }
+
+            dom.quizTopic.innerText = currentQuestion.topic;
+            dom.quizQuestionText.innerText = currentQuestion.question;
+            dom.quizHintBox.classList.add('hidden');
+
+            renderQuizOptions();
+            dom.modalQuiz.classList.remove('hidden');
+            audio.playHonk();
+        }
+
+        function renderQuizOptions() {
+            dom.quizAttemptBadge.innerText = `Tentativa ${gameState.currentAttempt} de 2`;
+            dom.quizOptionsContainer.innerHTML = '';
+
+            currentQuestion.options.forEach((opt, index) => {
+                const btn = document.createElement('button');
+                btn.className = "w-full text-left p-4 rounded-xl bg-slate-900/90 border border-slate-700/80 hover:border-sky-500 hover:bg-slate-800 transition-all text-xs md:text-sm text-slate-200 font-medium flex items-start gap-3 group";
+                btn.innerHTML = `
+                    <span class="w-6 h-6 rounded-full bg-slate-800 border border-slate-600 flex items-center justify-center text-xs text-sky-400 font-bold group-hover:border-sky-400 shrink-0">${String.fromCharCode(65 + index)}</span>
+                    <span class="leading-relaxed">${opt.text.substring(3)}</span>
+                `;
+                btn.onclick = () => handleAnswer(opt.correct, btn);
+                dom.quizOptionsContainer.appendChild(btn);
+            });
+        }
+
+        function handleAnswer(isCorrect, buttonEl) {
+            if (isCorrect) {
+                // ==================== ACERTO ====================
+                audio.playCorrect();
+                buttonEl.classList.remove('bg-slate-900/90', 'border-slate-700/80');
+                buttonEl.classList.add('bg-emerald-950', 'border-emerald-500', 'text-emerald-200');
+
+                if (gameState.currentAttempt === 1) {
+                    gameState.correctFirstTry++;
+                    gameState.consecutiveCorrect++;
+                    gameState.score += 2000;
+
+                    // Regra Bônus: 3 acertos seguidos recupera +15% combustível
+                    if (gameState.consecutiveCorrect >= 3) {
+                        gameState.fuel = Math.min(100, gameState.fuel + 15);
+                        showToast("BÔNUS RESERVA! +15% COMBUSTÍVEL RECUPERADO!");
+                    } else {
+                        showToast("LIBERAÇÃO EXPRESSA! BOOST DE VELOCIDADE!");
+                    }
+
+                    // Boost de Velocidade Expressa
+                    gameState.targetSpeed = (gameState.phase === 1) ? 110 : 130;
+                } else {
+                    // Acerto na 2ª tentativa
+                    gameState.consecutiveCorrect = 0;
+                    gameState.score += 1000;
+                    gameState.targetSpeed = 80;
+                    showToast("POSTO LIBERADO! RETOMANDO VIAGEM.");
+                }
+
+                setTimeout(() => {
+                    dom.modalQuiz.classList.add('hidden');
+                    gameState.isStoppedAtCheckpoint = false;
+                    advanceCheckpoint();
+                }, 1200);
+
+            } else {
+                // ==================== ERRO ====================
+                audio.playWrong();
+                gameState.totalErrors++;
+                gameState.consecutiveCorrect = 0;
+                buttonEl.classList.remove('bg-slate-900/90');
+                buttonEl.classList.add('bg-red-950', 'border-red-600', 'text-red-200', 'opacity-60');
+                buttonEl.disabled = true;
+
+                if (gameState.phase === 1) {
+                    // ----------- FASE 1 PUNIÇÕES -----------
+                    if (gameState.currentAttempt === 1) {
+                        // 1º Erro F1: -20% combustível + 2ª chance
+                        gameState.fuel -= 20;
+                        gameState.currentAttempt = 2;
+                        dom.quizHintText.innerText = currentQuestion.hint;
+                        dom.quizHintBox.classList.remove('hidden');
+                        renderQuizOptions();
+
+                        if (gameState.fuel <= 0) {
+                            triggerGameOver("Combustível esgotado após penalidade no 1º erro do Posto!");
+                        }
+                    } else {
+                        // 2º Erro F1: -30% adicional (total -50%) + perda de velocidade + avança
+                        gameState.fuel -= 30;
+                        gameState.targetSpeed = 60; // Reduz velocidade por retenção
+                        showToast("PENALIDADE MÁXIMA DO POSTO: -30% COMBUSTÍVEL!");
+
+                        if (gameState.fuel <= 0) {
+                            triggerGameOver("Combustível esgotado no Posto de Fiscalização!");
+                            return;
+                        }
+
+                        setTimeout(() => {
+                            dom.modalQuiz.classList.add('hidden');
+                            gameState.isStoppedAtCheckpoint = false;
+                            advanceCheckpoint();
+                        }, 1400);
+                    }
+                } else {
+                    // ----------- FASE 2 CHEFÃO PUNIÇÕES -----------
+                    if (gameState.currentAttempt === 1) {
+                        // 1º Erro Chefão: -35% imediato + Dica
+                        gameState.fuel -= 35;
+                        gameState.currentAttempt = 2;
+                        dom.quizHintText.innerText = currentQuestion.hint;
+                        dom.quizHintBox.classList.remove('hidden');
+                        renderQuizOptions();
+
+                        if (gameState.fuel <= 0) {
+                            triggerGameOver("Tanque esgotado pela fiscalização rigorosa da Receita Federal!");
+                        }
+                    } else {
+                        // 2º Erro Chefão: LOOP TEMPORAL / FALHA TOTAL!
+                        gameState.returnedToStartBoss = true;
+                        dom.modalQuiz.classList.add('hidden');
+                        
+                        // Reseta a distância para o início da Fase 2 SEM ressetar o relógio!
+                        gameState.distanceTraveled = 0;
+                        gameState.isStoppedAtCheckpoint = false;
+                        gameState.targetSpeed = 90;
+
+                        triggerWarningBanner("LOOP TEMPORAL! CARGA BARRA PELA FISCALIZAÇÃO. RETORNANDO AO INÍCIO DA SERRA!");
+                    }
+                }
+            }
+        }
+
+        function advanceCheckpoint() {
+            gameState.checkpointIndex++;
+            buildCheckpointHUD();
+
+            if (gameState.phase === 1) {
+                if (gameState.checkpointIndex >= gameState.totalCheckpoints) {
+                    // Transição para a Fase 2 (Chefão)
+                    startPhase2();
+                }
+            } else {
+                // Vitória na Fase 2!
+                triggerVictory();
+            }
+        }
+
+        /* ==================== TRANSIÇÃO DE FASES E FIM DE JOGO ==================== */
+        function startPhase2() {
+            gameState.phase = 2;
+            gameState.checkpointIndex = 0;
+            gameState.distanceTraveled = 0;
+            dom.hudPhaseBadge.innerText = "Fase 2 • Chefão";
+            dom.hudPhaseBadge.className = "text-xs px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-600";
+            
+            renderEngine.setPhaseVisuals(2);
+            buildCheckpointHUD();
+            showToast("ATENÇÃO: FASE 2! SERRA NOTURNA COM CHUVA. COMBUSTÍVEL EM CONSUMO CONTÍNUO!");
+        }
+
+        function triggerGameOver(reason) {
+            gameState.running = false;
+            dom.screenGameOver.classList.remove('hidden');
+            document.getElementById('gameover-reason').innerText = reason;
+            
+            const min = Math.floor(gameState.elapsedTime / 60);
+            const sec = (gameState.elapsedTime % 60).toFixed(1);
+            document.getElementById('go-time').innerText = `${min}:${sec}`;
+            document.getElementById('go-checkpoints').innerText = `${gameState.checkpointIndex}/${gameState.phase === 1 ? 5 : 1} (Fase ${gameState.phase})`;
+        }
+
+        function triggerVictory() {
+            gameState.running = false;
+            
+            // Cálculos Finais de Pontuação
+            const baseScore = 10000;
+            const fuelBonus = gameState.fuel * 50;
+            const timePenalty = gameState.elapsedTime * 15;
+            const finalScore = Math.max(1000, Math.floor(baseScore + fuelBonus - timePenalty));
+
+            // Determinar Estrelas
+            let stars = 1;
+            let rankTitle = "ENTREGA DE BRONZE (1 Estrela)";
+            
+            if (gameState.totalErrors === 0 && gameState.fuel >= 80) {
+                stars = 3;
+                rankTitle = "ENTREGA DE OURO! DESEMPENHO PERFEITO ★★★";
+            } else if (gameState.fuel >= 40 && !gameState.returnedToStartBoss) {
+                stars = 2;
+                rankTitle = "ENTREGA DE PRATA (2 Estrelas) ★★☆";
+            }
+
+            // Atualizar UI Vitória
+            document.getElementById('victory-rank-title').innerText = rankTitle;
+            document.getElementById('vic-score').innerText = finalScore.toLocaleString();
+            
+            const min = Math.floor(gameState.elapsedTime / 60);
+            const sec = (gameState.elapsedTime % 60).toFixed(1);
+            document.getElementById('vic-time').innerText = `${min}:${sec}`;
+            document.getElementById('vic-fuel').innerText = `${Math.round(gameState.fuel)}%`;
+            
+            const accuracy = Math.round((gameState.correctFirstTry / (gameState.phase === 1 ? 5 : 6)) * 100);
+            document.getElementById('vic-accuracy').innerText = `${accuracy}%`;
+
+            // Renderizar Estrelas HTML
+            const starsContainer = document.getElementById('victory-stars-container');
+            starsContainer.innerHTML = '';
+            for (let i = 0; i < 3; i++) {
+                const star = document.createElement('i');
+                star.className = `fa-solid fa-star ${i < stars ? 'text-amber-400 drop-shadow-md' : 'text-slate-700'}`;
+                starsContainer.appendChild(star);
+            }
+
+            dom.screenVictory.classList.remove('hidden');
+            audio.playCorrect();
+        }
+
+        /* ==================== REINÍCIO E EVENTOS ==================== */
+        function resetGame() {
+            gameState.running = true;
+            gameState.phase = 1;
+            gameState.score = 0;
+            gameState.elapsedTime = 0;
+            gameState.fuel = 100;
+            gameState.speed = 80;
+            gameState.targetSpeed = 80;
+            gameState.checkpointIndex = 0;
+            gameState.consecutiveCorrect = 0;
+            gameState.distanceTraveled = 0;
+            gameState.isStoppedAtCheckpoint = false;
+            gameState.correctFirstTry = 0;
+            gameState.totalErrors = 0;
+            gameState.returnedToStartBoss = false;
+
+            dom.hudPhaseBadge.innerText = "Fase 1";
+            dom.hudPhaseBadge.className = "text-xs px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-600";
+
+            renderEngine.setPhaseVisuals(1);
+            buildCheckpointHUD();
+
+            dom.screenStart.classList.add('hidden');
+            dom.screenGameOver.classList.add('hidden');
+            dom.screenVictory.classList.add('hidden');
+            dom.hudLayer.classList.remove('hidden');
+
+            lastTimestamp = 0;
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Listeners dos Botões
+        dom.btnStart.onclick = () => {
+            audio.init();
+            resetGame();
+        };
+
+        dom.btnRestartGO.onclick = () => {
+            resetGame();
+        };
+
+        dom.btnRestartVic.onclick = () => {
+            resetGame();
+        };
+    </script>
+</body>
+</html>
